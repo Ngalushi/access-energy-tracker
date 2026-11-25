@@ -13,6 +13,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "data.json"
 TODAY = datetime.date.today().isoformat()
 UA = {"User-Agent": "energy-tracker-bot/1.0"}
+def sec(p, i):
+    s = p.get(f"sector{i}")
+    return s if isinstance(s, dict) else {}
 
 # ISO3, ISO2, display name, World Bank projects API name
 SSA = [("AGO","AO","Angola","Angola"),("BEN","BJ","Benin","Benin"),("BWA","BW","Botswana","Botswana"),("BFA","BF","Burkina Faso","Burkina Faso"),("BDI","BI","Burundi","Burundi"),("CPV","CV","Cabo Verde","Cabo Verde"),("CMR","CM","Cameroon","Cameroon"),("CAF","CF","Central African Rep.","Central African Republic"),("TCD","TD","Chad","Chad"),("COM","KM","Comoros","Comoros"),("COD","CD","DR Congo","Congo, Democratic Republic of"),("COG","CG","Rep. of Congo","Congo, Republic of"),("CIV","CI","Côte d'Ivoire","Cote d'Ivoire"),("GNQ","GQ","Equatorial Guinea","Equatorial Guinea"),("ERI","ER","Eritrea","Eritrea"),("SWZ","SZ","Eswatini","Eswatini"),("ETH","ET","Ethiopia","Ethiopia"),("GAB","GA","Gabon","Gabon"),("GMB","GM","The Gambia","Gambia, The"),("GHA","GH","Ghana","Ghana"),("GIN","GN","Guinea","Guinea"),("GNB","GW","Guinea-Bissau","Guinea-Bissau"),("KEN","KE","Kenya","Kenya"),("LSO","LS","Lesotho","Lesotho"),("LBR","LR","Liberia","Liberia"),("MDG","MG","Madagascar","Madagascar"),("MWI","MW","Malawi","Malawi"),("MLI","ML","Mali","Mali"),("MRT","MR","Mauritania","Mauritania"),("MUS","MU","Mauritius","Mauritius"),("MOZ","MZ","Mozambique","Mozambique"),("NAM","NA","Namibia","Namibia"),("NER","NE","Niger","Niger"),("NGA","NG","Nigeria","Nigeria"),("RWA","RW","Rwanda","Rwanda"),("STP","ST","São Tomé and Príncipe","Sao Tome and Principe"),("SEN","SN","Senegal","Senegal"),("SYC","SC","Seychelles","Seychelles"),("SLE","SL","Sierra Leone","Sierra Leone"),("SOM","SO","Somalia","Somalia"),("ZAF","ZA","South Africa","South Africa"),("SSD","SS","South Sudan","South Sudan"),("SDN","SD","Sudan","Sudan"),("TZA","TZ","Tanzania","Tanzania"),("TGO","TG","Togo","Togo"),("UGA","UG","Uganda","Uganda"),("ZMB","ZM","Zambia","Zambia"),("ZWE","ZW","Zimbabwe","Zimbabwe")]
@@ -82,7 +85,7 @@ def wb_projects():
         y = (p.get("boardapprovaldate") or "")[:4]
         if y >= "2015":
             c = coverage.setdefault(y, [0, 0]); c[0] += 1
-            if (p.get("sector1") or {}).get("Name"): c[1] += 1
+            if sec(p, 1).get("Name"): c[1] += 1
     good = [y for y, (n, s) in coverage.items() if n and s / n >= 0.8]
     last = max(good) if good else "2023"
     years, ctry, fossil, accp = {}, {}, [], []
@@ -90,9 +93,10 @@ def wb_projects():
         y = (p.get("boardapprovaldate") or "")[:4]
         if not ("2015" <= y <= last) or p.get("status") == "Dropped": continue
         T = num(p.get("totalcommamt"))
+        if not T: continue
         e = [0.0]*5
         for i in range(1, 6):
-            s = p.get(f"sector{i}") or {}
+            s = sec(p, i)
             k = wb_cat(s.get("Name") or "")
             if k is not None: e[k] += T * (s.get("Percent") or 0) / 100
         es = sum(e)
@@ -202,9 +206,11 @@ def wbg_m300():
     with sync_playwright() as pw:
         b = pw.chromium.launch()
         pg = b.new_page(viewport={"width": 1400, "height": 1000})
-        pg.goto("https://www.worldbank.org/ext/en/energizingafrica/progress-portal", wait_until="networkidle", timeout=120000)
+        pg.goto("https://www.worldbank.org/ext/en/energizingafrica/progress-portal", wait_until="domcontentloaded", timeout=120000)
+        pg.wait_for_selector("iframe[src*='powerbi']", state="attached", timeout=90000)
         src = pg.locator("iframe[src*='powerbi']").first.get_attribute("src")
-        pg.goto(src, wait_until="networkidle", timeout=120000); pg.wait_for_timeout(12000)
+        pg.goto(src, wait_until="domcontentloaded", timeout=120000)
+        pg.wait_for_function("document.body.innerText.includes('People connected since')", timeout=90000); pg.wait_for_timeout(5000)
         t = pg.inner_text("body")
         m = re.search(r"([\d.]+)\s*Million\s*\n+\s*People connected since", t)
         res["connected"] = round(float(m.group(1)) * 1e6)
@@ -250,7 +256,8 @@ def wbg_m300():
             else:
                 i += 1
         if len(rows) > 20: res["projects"] = rows
-        pg.goto("https://www.worldbank.org/ext/en/energizingafrica/national-energy-compacts", wait_until="networkidle", timeout=120000)
+        pg.goto("https://www.worldbank.org/ext/en/energizingafrica/national-energy-compacts", wait_until="domcontentloaded", timeout=120000)
+        pg.wait_for_timeout(6000)
         ct = pg.inner_text("main")
         comp = {}
         for m in re.finditer(r"\n([A-Z][^\n]{2,40})\n\n([A-Z][a-z]+ \d{4})\n\nDownload(\n\nProgress)?", ct):
