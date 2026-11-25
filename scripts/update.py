@@ -122,6 +122,7 @@ def af_cls(t):
     if re.search(r"reform|governance|institution|efficien|support|technical assistance|study|studies|capacity|policy|regulat|digiti|excellence|accelera", t, re.I): return 3
     return 4
 
+I2N = {c[1]: c[2] for c in SSA}
 def afdb_iati():
     j = get("https://d-portal.org/q.json", params={"from": "act,sector", "limit": "-1", "select": "aid,title,day_start,commitment,spend,sector_code,sector_percent", "reporting_ref": "XM-DAC-46002"}).json()
     rows = [x for x in j["rows"] if re.match(r"^(23|3226)", str(x["sector_code"])) and (x["day_start"] or 0) >= 16436]
@@ -139,8 +140,8 @@ def afdb_iati():
         k = af_cls(t)
         yy = years.setdefault(str(y), [0.0]*7)
         yy[k] += com; yy[6] += sp
-        if ACC.search(t): yy[5] += com; accp.append(["AfDB", re.sub(r"^[^-–]+[-–]\s*", "", t)[:90], cc, y, round(com), round(sp)])
-        if k == 1: fossil.append(["AfDB", re.sub(r"^[^-–]+[-–]\s*", "", t)[:90], cc, y, round(com), "Fossil (title screen)"])
+        if ACC.search(t): yy[5] += com; accp.append(["AfDB", re.sub(r"^[^-–]+[-–]\s*", "", t)[:90], I2N.get(cc, "Multi-country"), y, round(com), round(sp)])
+        if k == 1: fossil.append(["AfDB", re.sub(r"^[^-–]+[-–]\s*", "", t)[:90], I2N.get(cc, "Multi-country"), y, round(com), "Fossil (title screen)"])
         ctry[cc] = ctry.get(cc, 0) + com
         tot += com; spent += sp; n += 1
         if str(x["sector_code"]) == "23111": gen += com
@@ -221,50 +222,60 @@ def wbg_m300():
         if fy and len(vals) >= len(fy) + 1:
             v = [int(x) for x in vals[-(len(fy)+1):-1]]
             res["byFY"] = [[f, x] for f, x in zip(fy, v)]
+        def growth(g):
+            for key, lab in [("biz", "Businesses provided with access to electricity"), ("social", "Social and public institutions provided with access to electricity")]:
+                m = re.search(r"([\d,]+)\n" + re.escape(lab), g)
+                if m: res[key] = int(m.group(1).replace(",", ""))
+        def cofin(f):
+            m = re.search(r"\n([\d.]+)\n\nTop Co-financiers", f)
+            if m: res["cofinBn"] = float(m.group(1))
+        def projects(_):
+            vp = pg.locator(".mid-viewport").first
+            vp.evaluate("e => e.scrollTop = 0"); pg.wait_for_timeout(1500)
+            chunks = []
+            for _i in range(80):
+                chunks.append(vp.inner_text())
+                before = vp.evaluate("e => e.scrollTop")
+                vp.evaluate("e => e.scrollTop += 350"); pg.wait_for_timeout(900)
+                if vp.evaluate("e => e.scrollTop") == before: break
+            merged = chunks[0].split("\n")
+            for c in chunks[1:]:
+                a = c.split("\n"); k = 0
+                for o in range(min(len(a), len(merged)), 0, -1):
+                    if a[:o] == merged[-o:]: k = o; break
+                merged += a[k:]
+            L = [x.strip() for x in merged if x.strip()]
+            rows = []; i = 0
+            while i + 3 < len(L):
+                c, p, a, tg = L[i:i+4]
+                if re.fullmatch(r"[\d.,]+[MK]?", a) and re.fullmatch(r"[\d.,]+[MK]?", tg):
+                    rows.append([norm(c), p, mnum(a), mnum(tg)]); i += 4
+                else:
+                    i += 1
+            if len(rows) > 20: res["projects"] = rows
+        def compacts():
+            pg.goto("https://www.worldbank.org/ext/en/energizingafrica/national-energy-compacts", wait_until="domcontentloaded", timeout=120000)
+            pg.wait_for_timeout(6000)
+            ct = pg.inner_text("main")
+            comp = {}
+            for m in re.finditer(r"\n([A-Z][^\n]{2,40})\n\n([A-Z][a-z]+ \d{4})\n\nDownload(\n\nProgress)?", ct):
+                comp[norm(m.group(1))] = m.group(2)[:3] + " " + m.group(2)[-4:] + ("*" if m.group(3) else "")
+            if len(comp) > 10: res["compacts"] = comp
         def tab(name):
-            pg.get_by_text(name, exact=True).last.click(); pg.wait_for_timeout(9000)
+            pg.evaluate("""n => { const els = [...document.querySelectorAll('*')].filter(e => e.children.length === 0 && e.textContent.trim() === n);
+                const el = els[els.length - 1]; if (!el) throw new Error('tab not found: ' + n);
+                el.dispatchEvent(new MouseEvent('click', {bubbles: true})); }""", name)
+            pg.wait_for_timeout(9000)
             return pg.inner_text("body")
-        g = tab("Powering Growth")
-        for key, lab in [("biz", "Businesses provided with access to electricity"), ("social", "Social and public institutions provided with access to electricity")]:
-            m = re.search(r"([\d,]+)\n" + re.escape(lab), g)
-            if m: res[key] = int(m.group(1).replace(",", ""))
-        f = tab("Financing & Mobilization")
-        m = re.search(r"\n([\d.]+)\n\nTop Co-financiers", f)
-        if m: res["cofinBn"] = float(m.group(1))
-        tab("Project Overview")
-        vp = pg.locator(".mid-viewport").first
-        vp.evaluate("e => e.scrollTop = 0"); pg.wait_for_timeout(1500)
-        chunks = []
-        for _ in range(80):
-            chunks.append(vp.inner_text())
-            before = vp.evaluate("e => e.scrollTop")
-            vp.evaluate("e => e.scrollTop += 350"); pg.wait_for_timeout(900)
-            if vp.evaluate("e => e.scrollTop") == before: break
-        merged = chunks[0].split("\n")
-        for c in chunks[1:]:
-            a = c.split("\n"); k = 0
-            for o in range(min(len(a), len(merged)), 0, -1):
-                if a[:o] == merged[-o:]: k = o; break
-            merged += a[k:]
-        L = [x.strip() for x in merged if x.strip()]
-        rows = []
-        i = 0
-        while i + 3 < len(L):
-            c, p, a, tg = L[i:i+4]
-            if re.fullmatch(r"[\d.,]+[MK]?", a) and re.fullmatch(r"[\d.,]+[MK]?", tg):
-                rows.append([norm(c), p, mnum(a), mnum(tg)]); i += 4
-            else:
-                i += 1
-        if len(rows) > 20: res["projects"] = rows
-        pg.goto("https://www.worldbank.org/ext/en/energizingafrica/national-energy-compacts", wait_until="domcontentloaded", timeout=120000)
-        pg.wait_for_timeout(6000)
-        ct = pg.inner_text("main")
-        comp = {}
-        for m in re.finditer(r"\n([A-Z][^\n]{2,40})\n\n([A-Z][a-z]+ \d{4})\n\nDownload(\n\nProgress)?", ct):
-            name = norm(m.group(1))
-            comp[name] = m.group(2)[:3] + " " + m.group(2)[-4:] + ("*" if m.group(3) else "")
-        if len(comp) > 10: res["compacts"] = comp
+        def part(fn):
+            try: fn()
+            except Exception as e: print("wbg_m300 part failed:", e)
+        part(lambda: growth(tab("Powering Growth")))
+        part(lambda: cofin(tab("Financing & Mobilization")))
+        part(lambda: projects(tab("Project Overview")))
+        part(compacts)
         b.close()
+    if "connected" not in res: raise RuntimeError("headline not found")
     return res
 
 # ---------------- assemble ----------------
