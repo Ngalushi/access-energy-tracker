@@ -216,8 +216,8 @@ def wbg_m300():
         m = re.search(r"([\d.]+)\s*Million\s*\n+\s*People connected since", t)
         res["connected"] = round(float(m.group(1)) * 1e6)
         d = re.search(r"Data as of ([A-Za-z]+ \d{4})", t); res["dataAsOf"] = d.group(1) if d else None
-        fy = re.findall(r"\n(FY\d\d)\n", t)
-        vals = re.findall(r"\n(\d+)M\n", t)
+        fy = re.findall(r"(?m)^\s*(FY\d\d)\s*$", t)
+        vals = re.findall(r"(?m)^\s*(\d+)M\s*$", t)
         # bar labels appear after the axis; the last value is the total
         if fy and len(vals) >= len(fy) + 1:
             v = [int(x) for x in vals[-(len(fy)+1):-1]]
