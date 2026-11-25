@@ -1,0 +1,30 @@
+name: Weekly data refresh
+on:
+  schedule:
+    - cron: "0 4 * * 1"   # every Monday 04:00 UTC (07:00 Nairobi)
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency: data-refresh
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install requests playwright
+          python -m playwright install --with-deps chromium
+      - name: Pull fresh data
+        run: python scripts/update.py
+      - name: Commit if changed
+        run: |
+          git config user.name "data-refresh-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data.json
+          git diff --cached --quiet || git commit -m "Weekly data refresh $(date -u +%F)"
+          git push
